@@ -1,0 +1,1 @@
+docker run --rm --pull always -p 80:8000 -v /Users/jussmor/Developer/jussmor/upbase/mydata:/mydata surrealdb/surrealdb:latest start --log trace --auth --user root --pass root file:/mydata/mydatabase.db

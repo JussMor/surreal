@@ -1,0 +1,10 @@
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    container_name: surrealdb
+    ports:
+      - "9000:8000"
+    volumes:
+      - /Users/jussmor/Developer/jussmor/upbase/mydata:/mydata
+    command: start --log trace --auth --user root --pass root  file:/mydata/mydatabase.db
+    restart: always
