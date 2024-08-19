@@ -2,20 +2,118 @@
 // use warp::Filter;
 // use warp::ws::{Message, WebSocket};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
+use std::any::Any;
 use std::collections::HashMap;
 use surrealdb::engine::remote::ws::{Client, Ws};
 use surrealdb::opt::auth::Root;
 use surrealdb::sql::Thing;
+use surrealdb::sql::Value as SurValue;
 use surrealdb::Surreal;
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+enum CustomValue {
+    Surreal(SurValue),
+    String(String),
+    Bool(bool),
+    Number(i64),
+    Array(Vec<CustomValue>),
+    Object(HashMap<String, CustomValue>),
+}
+
+impl From<String> for CustomValue {
+    fn from(value: String) -> Self {
+        CustomValue::String(value)
+    }
+}
+
+impl From<SurValue> for CustomValue {
+    fn from(value: SurValue) -> Self {
+        CustomValue::Surreal(value)
+    }
+}
+
+impl From<Value> for CustomValue {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::Null => CustomValue::Surreal(SurValue::None),
+            Value::Bool(b) => CustomValue::Bool(b),
+            Value::Number(n) => CustomValue::Number(n.as_i64().unwrap_or_default()),
+            Value::String(s) => CustomValue::String(s),
+            Value::Array(arr) => {
+                CustomValue::Array(arr.into_iter().map(CustomValue::from).collect())
+            }
+            Value::Object(obj) => {
+                let mapped = obj
+                    .into_iter()
+                    .map(|(k, v)| (k, CustomValue::from(v)))
+                    .collect();
+                CustomValue::Object(mapped)
+            }
+        }
+    }
+}
+
+impl Serialize for CustomValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            CustomValue::Surreal(sv) => sv.serialize(serializer),
+            CustomValue::String(s) => serializer.serialize_str(s),
+            CustomValue::Bool(b) => serializer.serialize_bool(*b),
+            CustomValue::Number(n) => serializer.serialize_i64(*n),
+            CustomValue::Array(arr) => arr.serialize(serializer),
+            CustomValue::Object(obj) => obj.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for CustomValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+
+        // Match against known Value types and convert to CustomValue
+        let custom_value = match value {
+            Value::Null => CustomValue::Surreal(SurValue::None),
+            Value::Bool(b) => CustomValue::Bool(b),
+            Value::Number(n) => CustomValue::Number(n.as_i64().unwrap_or_default()),
+            Value::String(s) => CustomValue::String(s),
+            Value::Array(arr) => {
+                CustomValue::Array(arr.into_iter().map(CustomValue::from).collect())
+            }
+            Value::Object(obj) => {
+                let mapped = obj
+                    .into_iter()
+                    .map(|(k, v)| (k, CustomValue::from(v)))
+                    .collect();
+                CustomValue::Object(mapped)
+            }
+            _ => {
+                return Err(serde::de::Error::custom(format!(
+                    "unknown variant `{}`, expected one of `Surreal`, `String`, `Bool`, `Number`, `Array`, `Object`",
+                    value
+                )));
+            }
+        };
+
+        Ok(custom_value)
+    }
+}
+
+type CustomHashMap = HashMap<String, CustomValue>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ComponentTemplate {
     id: Thing,
     name: String,
-    default_data: HashMap<String, Value>,
+    default_data: HashMap<String, CustomValue>,
     default_display_config: HashMap<String, bool>,
 }
 
@@ -24,15 +122,15 @@ struct Block {
     id: String,
     #[serde(rename = "type")]
     block_type: String,
-    data: HashMap<String, Value>,
+    data: HashMap<String, CustomValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Change {
     block_id: String,
     timestamp: DateTime<Utc>,
-    old_data: HashMap<String, Value>,
-    new_data: HashMap<String, Value>,
+    old_data: HashMap<String, CustomValue>,
+    new_data: HashMap<String, CustomValue>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,7 +160,7 @@ impl Document {
         }
     }
 
-    fn add_block(&mut self, block_type: &str, data: HashMap<String, Value>) -> String {
+    fn add_block(&mut self, block_type: &str, data: HashMap<String, CustomValue>) -> String {
         let id = Uuid::new_v4().to_string();
         let block = Block {
             id: id.clone(),
@@ -76,7 +174,7 @@ impl Document {
     fn update_block(
         &mut self,
         block_id: &str,
-        new_data: HashMap<String, Value>,
+        new_data: HashMap<String, CustomValue>,
     ) -> Result<(), String> {
         if let Some(block) = self.content.blocks.iter_mut().find(|b| b.id == block_id) {
             let old_data = std::mem::replace(&mut block.data, new_data.clone());
@@ -93,100 +191,100 @@ impl Document {
         }
     }
 
-    fn create_version(&mut self) -> u64 {
-        let version = self.changes.len() as u64 + 1;
-        let snapshot = self.content.blocks.clone();
-        self.changes.push(Change {
-            block_id: String::new(),
-            timestamp: Utc::now(),
-            old_data: HashMap::new(),
-            new_data: HashMap::from([
-                ("version".to_string(), json!(version)),
-                ("snapshot".to_string(), json!(snapshot)),
-            ]),
-        });
-        version
-    }
+    // fn create_version(&mut self) -> u64 {
+    //     let version = self.changes.len() as u64 + 1;
+    //     let snapshot = self.content.blocks.clone();
+    //     self.changes.push(Change {
+    //         block_id: String::new(),
+    //         timestamp: Utc::now(),
+    //         old_data: HashMap::new(),
+    //         new_data: HashMap::from([
+    //             ("version".to_string(), json!(version)),
+    //             ("snapshot".to_string(), json!(snapshot)),
+    //         ]),
+    //     });
+    //     version
+    // }
 
-    fn restore_version(&mut self, version: u64) -> Result<(), String> {
-        if version == 0 || version > self.changes.len() as u64 {
-            return Err("Invalid version number".to_string());
-        }
-        let snapshot = self
-            .changes
-            .get(version as usize - 1)
-            .and_then(|change| change.new_data.get("snapshot"))
-            .and_then(|snapshot| snapshot.as_array())
-            .ok_or("Invalid snapshot data".to_string())?;
+    // fn restore_version(&mut self, version: u64) -> Result<(), String> {
+    //     if version == 0 || version > self.changes.len() as u64 {
+    //         return Err("Invalid version number".to_string());
+    //     }
+    //     let snapshot = self
+    //         .changes
+    //         .get(version as usize - 1)
+    //         .and_then(|change| change.new_data.get("snapshot"))
+    //         .and_then(|snapshot| snapshot.as_array())
+    //         .ok_or("Invalid snapshot data".to_string())?;
 
-        self.content.blocks = serde_json::from_value(json!(snapshot)).map_err(|e| e.to_string())?;
-        Ok(())
-    }
+    //     self.content.blocks = serde_json::from_value(json!(snapshot)).map_err(|e| e.to_string())?;
+    //     Ok(())
+    // }
 
-    #[allow(dead_code)]
-    fn to_editor_js_format(&self) -> serde_json::Value {
-        json!({
-            "time": self.content.time,
-            "blocks": self.content.blocks,
-            "version": self.content.version
-        })
-    }
+    // #[allow(dead_code)]
+    // fn to_editor_js_format(&self) -> serde_json::Value {
+    //     json!({
+    //         "time": self.content.time,
+    //         "blocks": self.content.blocks,
+    //         "version": self.content.version
+    //     })
+    // }
 
     fn update_time(&mut self) {
         self.content.time = Utc::now().timestamp_millis();
     }
 
-    #[allow(dead_code)]
-    fn attach_block_to_template(
-        &mut self,
-        block_id: &str,
-        template: &ComponentTemplate,
-    ) -> Result<(), String> {
-        if let Some(block) = self.content.blocks.iter_mut().find(|b| b.id == block_id) {
-            let mut new_data = template.default_data.clone();
-            new_data.insert("is_attached".to_string(), json!(true));
-            new_data.insert("template_id".to_string(), json!(template.id));
-            new_data.insert(
-                "display_config".to_string(),
-                json!(template.default_display_config),
-            );
+    // #[allow(dead_code)]
+    // fn attach_block_to_template(
+    //     &mut self,
+    //     block_id: &str,
+    //     template: &ComponentTemplate,
+    // ) -> Result<(), String> {
+    //     if let Some(block) = self.content.blocks.iter_mut().find(|b| b.id == block_id) {
+    //         let mut new_data = template.default_data.clone();
+    //         new_data.insert("is_attached".to_string(), json!(true));
+    //         new_data.insert("template_id".to_string(), json!(template.id));
+    //         new_data.insert(
+    //             "display_config".to_string(),
+    //             json!(template.default_display_config),
+    //         );
 
-            // Preserve existing data as local overrides
-            let local_overrides: HashMap<String, Value> = block
-                .data
-                .iter()
-                .filter(|(k, v)| template.default_data.get(*k) != Some(v))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            if !local_overrides.is_empty() {
-                new_data.insert("local_overrides".to_string(), json!(local_overrides));
-            }
+    //         // Preserve existing data as local overrides
+    //         let local_overrides: HashMap<String, Value> = block
+    //             .data
+    //             .iter()
+    //             .filter(|(k, v)| template.default_data.get(*k) != Some(v))
+    //             .map(|(k, v)| (k.clone(), v.clone()))
+    //             .collect();
+    //         if !local_overrides.is_empty() {
+    //             new_data.insert("local_overrides".to_string(), json!(local_overrides));
+    //         }
 
-            self.update_block(block_id, new_data)
-        } else {
-            Err("Block not found".to_string())
-        }
-    }
+    //         self.update_block(block_id, new_data)
+    //     } else {
+    //         Err("Block not found".to_string())
+    //     }
+    // }
 
-    fn detach_block_from_template(&mut self, block_id: &str) -> Result<(), String> {
-        if let Some(block) = self.content.blocks.iter_mut().find(|b| b.id == block_id) {
-            let mut new_data = block.data.clone();
-            new_data.insert("is_attached".to_string(), json!(false));
-            new_data.remove("template_id");
+    // fn detach_block_from_template(&mut self, block_id: &str) -> Result<(), String> {
+    //     if let Some(block) = self.content.blocks.iter_mut().find(|b| b.id == block_id) {
+    //         let mut new_data = block.data.clone();
+    //         new_data.insert("is_attached".to_string(), json!(false));
+    //         new_data.remove("template_id");
 
-            if let Some(local_overrides) = new_data.remove("local_overrides") {
-                if let Some(overrides) = local_overrides.as_object() {
-                    for (key, value) in overrides {
-                        new_data.insert(key.clone(), value.clone());
-                    }
-                }
-            }
+    //         if let Some(local_overrides) = new_data.remove("local_overrides") {
+    //             if let Some(overrides) = local_overrides.as_object() {
+    //                 for (key, value) in overrides {
+    //                     new_data.insert(key.clone(), value.clone());
+    //                 }
+    //             }
+    //         }
 
-            self.update_block(block_id, new_data)
-        } else {
-            Err("Block not found".to_string())
-        }
-    }
+    //         self.update_block(block_id, new_data)
+    //     } else {
+    //         Err("Block not found".to_string())
+    //     }
+    // }
 }
 
 struct DocumentStore {
@@ -220,39 +318,39 @@ impl DocumentStore {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    async fn delete_document(&self, id: &Thing) -> Result<(), surrealdb::Error> {
-        self.db
-            .delete::<Option<Document>>(("documents", id.id.to_raw()))
-            .await?;
-        Ok(())
-    }
+    // #[allow(dead_code)]
+    // async fn delete_document(&self, id: &Thing) -> Result<(), surrealdb::Error> {
+    //     self.db
+    //         .delete::<Option<Document>>(("documents", id.id.to_raw()))
+    //         .await?;
+    //     Ok(())
+    // }
 
-    #[allow(dead_code)]
-    async fn create_version(&self, id: &Thing) -> Result<u64, surrealdb::Error> {
-        let mut doc = self
-            .get_document(id)
-            .await?
-            .ok_or(surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
-        let version = doc.create_version();
-        self.update_document(id, doc).await?;
-        Ok(version)
-    }
+    // #[allow(dead_code)]
+    // async fn create_version(&self, id: &Thing) -> Result<u64, surrealdb::Error> {
+    //     let mut doc = self
+    //         .get_document(id)
+    //         .await?
+    //         .ok_or(surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
+    //     let version = doc.create_version();
+    //     self.update_document(id, doc).await?;
+    //     Ok(version)
+    // }
 
-    #[allow(dead_code)]
-    async fn restore_version(&self, id: &Thing, version: u64) -> Result<(), surrealdb::Error> {
-        let mut doc = self
-            .get_document(id)
-            .await?
-            .ok_or(surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
-        doc.restore_version(version).map_err(|e| {
-            surrealdb::Error::Db(surrealdb::error::Db::InvalidArguments {
-                name: "Invalid Version".to_string(),
-                message: e,
-            })
-        })?;
-        self.update_document(id, doc).await
-    }
+    // #[allow(dead_code)]
+    // async fn restore_version(&self, id: &Thing, version: u64) -> Result<(), surrealdb::Error> {
+    //     let mut doc = self
+    //         .get_document(id)
+    //         .await?
+    //         .ok_or(surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
+    //     doc.restore_version(version).map_err(|e| {
+    //         surrealdb::Error::Db(surrealdb::error::Db::InvalidArguments {
+    //             name: "Invalid Version".to_string(),
+    //             message: e,
+    //         })
+    //     })?;
+    //     self.update_document(id, doc).await
+    // }
 }
 
 struct ComponentTemplateStore {
@@ -297,142 +395,141 @@ impl ComponentTemplateStore {
         Ok(())
     }
 
-    async fn propagate_template_changes(
-        &self,
-        template_id: &str,
-        document_store: &DocumentStore,
-    ) -> Result<(), surrealdb::Error> {
-        let template = self
-            .get_template(template_id)
-            .await?
-            .ok_or(surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
+    //     async fn propagate_template_changes(
+    //         &self,
+    //         template_id: &str,
+    //         document_store: &DocumentStore,
+    //     ) -> Result<(), surrealdb::Error> {
+    //         let template = self
+    //             .get_template(template_id)
+    //             .await?
+    //             .ok_or(surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
 
-        let all_documents: Vec<Document> = document_store.db.select("documents").await?;
-        println!(
-            "Propagating template changes to {} documents",
-            all_documents.len()
-        );
-        println!("Template: {:?}", template);
+    //         let all_documents: Vec<Document> = document_store.db.select("documents").await?;
+    //         println!(
+    //             "Propagating template changes to {} documents",
+    //             all_documents.len()
+    //         );
+    //         println!("Template: {:?}", template);
 
-for mut doc in all_documents {
-        println!("Processing document: {:?}", doc.id);
-        let mut updated = false;
-        for (block_index, block) in doc.content.blocks.iter_mut().enumerate() {
-            println!("  Checking block {} in document", block_index);
-            
-            let attached_template_id = block.data.get("template_id")
-                .and_then(|v| v.get("id"))
-                .and_then(|v| v.as_str());
-            
-            let is_attached = block.data.get("is_attached")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+    // for mut doc in all_documents {
+    //         println!("Processing document: {:?}", doc.id);
+    //         let mut updated = false;
+    //         for (block_index, block) in doc.content.blocks.iter_mut().enumerate() {
+    //             println!("  Checking block {} in document", block_index);
 
-            println!("    Block template_id: {:?}, is_attached: {}", attached_template_id, is_attached);
-            
-            if let Some(attached_id) = attached_template_id {
-                if attached_id == template_id && is_attached {
-                    println!("    Block is attached to the updated template");
-                    let mut block_updated = false;
+    //             let attached_template_id = block.data.get("template_id")
+    //                 .and_then(|v| v.get("id"))
+    //                 .and_then(|v| v.as_str());
 
-                    for (key, value) in &template.default_data {
-                        if !block.data.contains_key(key) || 
-                           !block.data.get("local_overrides")
-                                    .and_then(|v| v.as_object())
-                                    .map(|o| o.contains_key(key))
-                                    .unwrap_or(false) 
-                        {
-                            block.data.insert(key.clone(), value.clone());
-                            println!("      Updated/Added field: {} = {:?}", key, value);
-                            block_updated = true;
-                        }
-                    }
+    //             let is_attached = block.data.get("is_attached")
+    //                 .and_then(|v| v.as_bool())
+    //                 .unwrap_or(false);
 
-                    println!("{:?}",template_id);
+    //             println!("    Block template_id: {:?}, is_attached: {}", attached_template_id, is_attached);
 
-                    // Ensure core fields are set correctly
-                    block.data.insert("is_attached".to_string(), json!(true));
-                    block.data.insert("template_id".to_string(), json!({
-                        "id": template_id,
-                        "tb": "component_templates"
-                    }));
-                    block.data.insert("display_config".to_string(), json!(template.default_display_config));
+    //             if let Some(attached_id) = attached_template_id {
+    //                 if attached_id == template_id && is_attached {
+    //                     println!("    Block is attached to the updated template");
+    //                     let mut block_updated = false;
 
-                    if block_updated {
-                        updated = true;
-                        println!("    Block updated");
-                    } else {
-                        println!("    No changes needed for this block");
-                    }
-                } else {
-                    println!("    Block is not attached to the updated template");
-                }
-            } else {
-                println!("    Block is not associated with any template");
-            }
-        }
-        if updated {
-            println!("Updating document in database: {:?}", doc.id);
-            document_store
-                .update_document(&doc.id.clone().unwrap(), doc)
-                .await?;
-        } else {
-            println!("No updates needed for document: {:?}", doc.id);
-        }
-    }
-    Ok(())
-    }
-    
+    //                     for (key, value) in &template.default_data {
+    //                         if !block.data.contains_key(key) ||
+    //                            !block.data.get("local_overrides")
+    //                                     .and_then(|v| v.as_object())
+    //                                     .map(|o| o.contains_key(key))
+    //                                     .unwrap_or(false)
+    //                         {
+    //                             block.data.insert(key.clone(), value.clone());
+    //                             println!("      Updated/Added field: {} = {:?}", key, value);
+    //                             block_updated = true;
+    //                         }
+    //                     }
+
+    //                     println!("{:?}",template_id);
+
+    //                     // Ensure core fields are set correctly
+    //                     block.data.insert("is_attached".to_string(), json!(true));
+    //                     block.data.insert("template_id".to_string(), json!({
+    //                         "id": template_id,
+    //                         "tb": "component_templates"
+    //                     }));
+    //                     block.data.insert("display_config".to_string(), json!(template.default_display_config));
+
+    //                     if block_updated {
+    //                         updated = true;
+    //                         println!("    Block updated");
+    //                     } else {
+    //                         println!("    No changes needed for this block");
+    //                     }
+    //                 } else {
+    //                     println!("    Block is not attached to the updated template");
+    //                 }
+    //             } else {
+    //                 println!("    Block is not associated with any template");
+    //             }
+    //         }
+    //         if updated {
+    //             println!("Updating document in database: {:?}", doc.id);
+    //             document_store
+    //                 .update_document(&doc.id.clone().unwrap(), doc)
+    //                 .await?;
+    //         } else {
+    //             println!("No updates needed for document: {:?}", doc.id);
+    //         }
+    //     }
+    //     Ok(())
+    //     }
 }
 
-#[allow(dead_code)]
-async fn get_document_as_editor_js(
-    store: &DocumentStore,
-    id: &Thing,
-) -> Result<serde_json::Value, surrealdb::Error> {
-    let doc = store
-        .get_document(id)
-        .await?
-        .ok_or(surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
-    Ok(doc.to_editor_js_format())
-}
+// #[allow(dead_code)]
+// async fn get_document_as_editor_js(
+//     store: &DocumentStore,
+//     id: &Thing,
+// ) -> Result<serde_json::Value, surrealdb::Error> {
+//     let doc = store
+//         .get_document(id)
+//         .await?
+//         .ok_or(surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
+//     Ok(doc.to_editor_js_format())
+// }
 
-async fn update_template_and_propagate(
-    template_store: &ComponentTemplateStore,
-    document_store: &DocumentStore,
-    template_id: &str,
-    updates: &HashMap<String, Value>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Fetch the existing template
-    let mut template = template_store
-        .get_template(template_id)
-        .await?
-        .ok_or_else(|| surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
+// async fn update_template_and_propagate(
+//     template_store: &ComponentTemplateStore,
+//     document_store: &DocumentStore,
+//     template_id: &str,
+//     updates: &HashMap<String, Value>,
+// ) -> Result<(), Box<dyn std::error::Error>> {
+//     // Fetch the existing template
+//     let mut template = template_store
+//         .get_template(template_id)
+//         .await?
+//         .ok_or_else(|| surrealdb::Error::Db(surrealdb::error::Db::NoRecordFound))?;
 
-    println!("Existing template: {:?}", template);
+//     println!("Existing template: {:?}", template);
 
-    // Apply the updates
-    for (key, value) in updates {
-        template.default_data.insert(key.clone(), value.clone());
-        println!("Updating field: {} = {:?}", key, value);
-    }
+//     // Apply the updates
+//     for (key, value) in updates {
+//         template.default_data.insert(key.clone(), value.clone());
+//         println!("Updating field: {} = {:?}", key, value);
+//     }
 
-    println!("Updated template: {:?}", template);
+//     println!("Updated template: {:?}", template);
 
-    // Update the template in the database
-    template_store
-        .update_template(template_id, &template)
-        .await?;
-    println!("Template updated in database");
+//     // Update the template in the database
+//     template_store
+//         .update_template(template_id, &template)
+//         .await?;
+//     println!("Template updated in database");
 
-    // Propagate the changes
-    template_store
-        .propagate_template_changes(template_id, document_store)
-        .await?;
-    println!("Changes propagated to documents");
+//     // Propagate the changes
+//     template_store
+//         .propagate_template_changes(template_id, document_store)
+//         .await?;
+//     println!("Changes propagated to documents");
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -449,19 +546,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let template_store = ComponentTemplateStore::new(db).await?;
 
     // Create a component template
-    let mut author_bio_template = ComponentTemplate {
+    let author_bio_template = ComponentTemplate {
         id: Thing::from(("component_templates", "ct-001")),
         name: "Author Bio".to_string(),
         default_data: HashMap::from([
-            ("name".to_string(), json!("Default Author")),
-            ("bio".to_string(), json!("This is a default author bio.")),
+            ("name".to_string(), json!("Default Author").into()),
+            (
+                "bio".to_string(),
+                json!("This is a default author bio.").into(),
+            ),
             (
                 "image_url".to_string(),
-                json!("https://example.com/default.jpg"),
+                json!("https://example.com/default.jpg").into(),
             ),
             (
                 "social_links".to_string(),
-                json!([{"platform": "Twitter", "url": "https://twitter.com/default"}]),
+                json!([{"platform": "Twitter", "url": "https://twitter.com/default"}]).into(),
             ),
         ]),
         default_display_config: HashMap::from([
@@ -472,64 +572,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ]),
     };
     let template_id = template_store.create_template(&author_bio_template).await?;
-    println!("Created template with ID: {:?}", template_id);
+    // println!("Created template with ID: {:?}", template_id);
 
-    // Create a new document with a linked block
+    // // Create a new document with a linked block
     let mut doc = Document::new();
     doc.add_block(
         "header",
         HashMap::from([
-            ("text".to_string(), json!("My First Blog Post")),
-            ("level".to_string(), json!(1)),
+            ("text".to_string(), json!("My First Blog Post").into()),
+            ("level".to_string(), json!(1).into()),
         ]),
     );
     doc.add_block(
         "paragraph",
         HashMap::from([(
             "text".to_string(),
-            json!("This is the content of my first blog post."),
+            json!("This is the content of my first blog post.").into(),
         )]),
     );
 
-    // Add a linked authorBio block
-    let author_bio_data = HashMap::from([
-        ("name".to_string(), json!("John Doe")),
-        ("bio".to_string(), json!("Default bio for John Doe")),
+    // // Add a linked authorBio block
+    let author_bio_data: HashMap<String, CustomValue> = HashMap::from([
+        ("name".to_string(), "John Doe".to_string().into()),
+        (
+            "bio".to_string(),
+            "Default bio for John Doe".to_string().into(),
+        ),
         (
             "image_url".to_string(),
-            json!("https://example.com/johndoe.jpg"),
+            "https://example.com/johndoe.jpg".to_string().into(),
         ),
         (
             "social_links".to_string(),
-            json!([
-                {"platform": "Twitter", "url": "https://twitter.com/johndoe"},
-                {"platform": "LinkedIn", "url": "https://linkedin.com/in/johndoe"}
+            CustomValue::Array(vec![
+                CustomValue::Object(HashMap::from([
+                    ("platform".to_string(), "Twitter".to_string().into()),
+                    (
+                        "url".to_string(),
+                        "https://twitter.com/johndoe".to_string().into(),
+                    ),
+                ])),
+                CustomValue::Object(HashMap::from([
+                    ("platform".to_string(), "LinkedIn".to_string().into()),
+                    (
+                        "url".to_string(),
+                        "https://linkedin.com/in/johndoe".to_string().into(),
+                    ),
+                ])),
             ]),
         ),
         (
             "display_config".to_string(),
-            json!({
-                "name": true,
-                "bio": true,
-                "image_url": false,
-                "social_links": true
-            }),
+            CustomValue::Object(HashMap::from([
+                ("name".to_string(), CustomValue::Bool(true)),
+                ("bio".to_string(), CustomValue::Bool(true)),
+                ("image_url".to_string(), CustomValue::Bool(false)),
+                ("social_links".to_string(), CustomValue::Bool(true)),
+            ])),
         ),
-        ("is_attached".to_string(), json!(true)),
-        ("template_id".to_string(), json!(Thing::from(("component_templates", "ct-001")))),
+        ("is_attached".to_string(), CustomValue::Bool(true)),
+        (
+            "template_id".to_string(),
+            SurValue::Thing(Thing::from(("component_templates", "ct-001"))).into(),
+        ),
     ]);
+
     let author_bio_id = doc.add_block("authorBio", author_bio_data);
 
-    // Save the document to the database
+    // // Save the document to the database
     let doc_id = store.create_document(doc).await?;
-    println!("Created document with ID: {:?}", doc_id);
+    // println!("Created document with ID: {:?}", doc_id);
     println!("id: {:?}", author_bio_id);
 
-    // // Retrieve the document
+    // // // Retrieve the document
     let mut retrieved_doc = store.get_document(&doc_id).await?.unwrap();
-    // println!("Retrieved document: {:?}", retrieved_doc);
+    // // println!("Retrieved document: {:?}", retrieved_doc);
 
-    // Apply a local override to the linked block
+    // // Apply a local override to the linked block
     let author_bio_block = retrieved_doc
         .content
         .blocks
@@ -541,71 +660,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "local_overrides".to_string(),
         json!({
             "bio": "This is a custom bio for John Doe, overriding the template."
-        }),
+        })
+        .into(),
     );
     retrieved_doc.update_block(&author_bio_id, author_bio_data)?;
 
-    // Update the document in the database
-    store.update_document(&doc_id, retrieved_doc).await?;
+    // // Update the document in the database
+    // store.update_document(&doc_id, retrieved_doc).await?;
 
-    // Retrieve the updated document and print it
-    let updated_doc = store.get_document(&doc_id).await?.unwrap();
-    println!("Updated document with local override: {:?}", updated_doc);
+    // // Retrieve the updated document and print it
+    // let updated_doc = store.get_document(&doc_id).await?.unwrap();
+    // println!("Updated document with local override: {:?}", updated_doc);
 
-    // Detach the block from the template
-    let mut detached_doc = updated_doc;
-    detached_doc.detach_block_from_template(&author_bio_id)?;
+    // // Detach the block from the template
+    // let mut detached_doc = updated_doc;
+    // detached_doc.detach_block_from_template(&author_bio_id)?;
 
-    // Update the document with the detached block
-    store.update_document(&doc_id, detached_doc).await?;
+    // // Update the document with the detached block
+    // store.update_document(&doc_id, detached_doc).await?;
 
-    // Retrieve and print the final document
-    let final_doc = store.get_document(&doc_id).await?.unwrap();
-    println!("Final document with detached block: {:?}", final_doc);
+    // // Retrieve and print the final document
+    // let final_doc = store.get_document(&doc_id).await?.unwrap();
+    // println!("Final document with detached block: {:?}", final_doc);
 
-    // Print the change history
-    println!("Change history:");
-    for (i, change) in final_doc.changes.iter().enumerate() {
-        println!("Change {}: {:?}", i + 1, change);
-    }
-    // Now, let's demonstrate attaching a block to a template
-    let mut doc_for_attach = Document::new();
-    let new_block_id = doc_for_attach.add_block("newBlock", HashMap::new());
-    println!("New block ID: {:?}", new_block_id);
+    // // Print the change history
+    // println!("Change history:");
+    // for (i, change) in final_doc.changes.iter().enumerate() {
+    //     println!("Change {}: {:?}", i + 1, change);
+    // }
+    // // Now, let's demonstrate attaching a block to a template
+    // let mut doc_for_attach = Document::new();
+    // let new_block_id = doc_for_attach.add_block("newBlock", HashMap::new());
+    // println!("New block ID: {:?}", new_block_id);
 
-    // Retrieve the template
-    let template = template_store.get_template("ct-001").await?.unwrap();
+    // // Retrieve the template
+    // let template = template_store.get_template("ct-001").await?.unwrap();
 
-    // Attach the block to the template
-    doc_for_attach.attach_block_to_template(&new_block_id, &template)?;
+    // // Attach the block to the template
+    // doc_for_attach.attach_block_to_template(&new_block_id, &template)?;
 
-    // Save the document with the attached block
-    let doc_id_with_attached = store.create_document(doc_for_attach).await?;
+    // // Save the document with the attached block
+    // let doc_id_with_attached = store.create_document(doc_for_attach).await?;
 
-    // Retrieve and print the document with the attached block
-    let doc_with_attached = store.get_document(&doc_id_with_attached).await?.unwrap();
-    println!("Document with attached block: {:?}", doc_with_attached);
+    // // Retrieve and print the document with the attached block
+    // let doc_with_attached = store.get_document(&doc_id_with_attached).await?.unwrap();
+    // println!("Document with attached block: {:?}", doc_with_attached);
 
-    let updates = HashMap::from([("new_field".to_string(), json!("New default value"))]);
-    update_template_and_propagate(&template_store, &store, "ct-001", &updates).await?;
+    // let updates = HashMap::from([("new_field".to_string(), json!("New default value"))]);
+    // update_template_and_propagate(&template_store, &store, "ct-001", &updates).await?;
 
     Ok(())
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
