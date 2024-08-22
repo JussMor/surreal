@@ -2,12 +2,27 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use ntex_cors::Cors;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::remote::ws::{Client, Ws};
 use surrealdb::opt::auth::Root;
 use surrealdb::sql::{thing, Id, Uuid};
 use surrealdb::sql::{Thing, Value};
 use surrealdb::Surreal;
+use ntex::web::{App, HttpServer, middleware::Logger};
+use env_logger::Env;
+use std::env;
+use std::sync::Arc;
+
+mod services;
+mod db;
+mod models;
+mod stores;
+
+#[derive(Clone)]
+struct AppState {
+    db: Arc<Surreal<Client>>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ComponentTemplate {
@@ -161,19 +176,25 @@ impl ComponentTemplateStore {
     }
 }
 
-#[tokio::main]
-async fn main() -> surrealdb::Result<()> {
+#[ntex::main]
+async fn main() -> std::io::Result<()> {
+    env_logger::init_from_env(Env::default().default_filter_or("info"));
     // Connect to the server
-    let db = Surreal::new::<Ws>("127.0.0.1:9000").await?;
-
-    // Signin as a namespace, database, or root user
-    db.signin(Root {
-        username: "root",
-        password: "root",
-    })
-    .await?;
-
-    db.use_ns("test").use_db("test").await?;
+    let connection = match db::connection::function_connect_to_surreal().await {
+        Ok(db) => {
+            // Proceed with your logic using the `db` connection
+            println!("Successfully connected to the database.");
+            db
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to the database: {}", e);
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+        }
+    };
+    
+    let db = Arc::new(connection);
+    
+    
 
     // let doc = Document {
     //     id: None,
@@ -233,73 +254,87 @@ async fn main() -> surrealdb::Result<()> {
     //     .await?;
 
     //Upbase Code
-    let store: DocumentStore = DocumentStore::new(db.clone()).await?;
+    // let store: DocumentStore = DocumentStore::new(db.clone()).await?;
 
-    let mut doc_up: Document = Document::new();
+    // let mut doc_up: Document = Document::new();
 
-    doc_up.add_block(
-        "header",
-        BlockData::from([("text".to_string(), BlockValue::String("hola".to_string()))]),
-    );
+    // doc_up.add_block(
+    //     "header",
+    //     BlockData::from([("text".to_string(), BlockValue::String("hola".to_string()))]),
+    // );
 
     // // Save the document to the database
-    let create_doc: Document = store.create_document(doc_up).await?;
+    // let create_doc: Document = store.create_document(doc_up).await?;
 
-    let doc_id = create_doc.id.unwrap();
+    // let doc_id = create_doc.id.unwrap();
 
-    let mut retrieved_doc = store.get_document(&doc_id).await?.unwrap();
+    // let mut retrieved_doc = store.get_document(&doc_id).await?.unwrap();
 
 
-    let template_store = ComponentTemplateStore::new(db).await?;
+    // let template_store = ComponentTemplateStore::new(db).await?;
 
-    let author_bio_template = ComponentTemplate {
-        id: Some(Thing::from(("component_templates", "ct-001"))),
-        name: "Author Bio".to_string(),
-        default_data: BlockData::from([
-            (
-                "name".to_string(),
-                BlockValue::String("Default Author".to_string()),
-            ),
-            (
-                "bio".to_string(),
-                BlockValue::String("Default Author Bio".to_string()),
-            ),
-            (
-                "image_url".to_string(),
-                BlockValue::String("https://example.com/default.jpg".to_string()),
-            ),
-            (
-                "social_links".to_string(),
-                BlockValue::Vec(vec![
-                    BlockValue::Object(BlockData::from([(
-                        "nested_field".to_string(),
-                        BlockValue::Thing(Thing {
-                            tb: "documents".to_string(),
-                            id: Id::from("euqgnw19107bsgeprzoe".to_string()),
-                        }),
-                    )])),
-                    BlockValue::Number(2.0),
-                ]),
-            ),
-        ]),
-        default_display_config: HashMap::from([
-            ("name".to_string(), true),
-            ("bio".to_string(), true),
-            ("image_url".to_string(), true),
-            ("social_links".to_string(), true),
-        ]),
+    // let author_bio_template = ComponentTemplate {
+    //     id: Some(Thing::from(("component_templates", "ct-001"))),
+    //     name: "Author Bio".to_string(),
+    //     default_data: BlockData::from([
+    //         (
+    //             "name".to_string(),
+    //             BlockValue::String("Default Author".to_string()),
+    //         ),
+    //         (
+    //             "bio".to_string(),
+    //             BlockValue::String("Default Author Bio".to_string()),
+    //         ),
+    //         (
+    //             "image_url".to_string(),
+    //             BlockValue::String("https://example.com/default.jpg".to_string()),
+    //         ),
+    //         (
+    //             "social_links".to_string(),
+    //             BlockValue::Vec(vec![
+    //                 BlockValue::Object(BlockData::from([(
+    //                     "nested_field".to_string(),
+    //                     BlockValue::Thing(Thing {
+    //                         tb: "documents".to_string(),
+    //                         id: Id::from("euqgnw19107bsgeprzoe".to_string()),
+    //                     }),
+    //                 )])),
+    //                 BlockValue::Number(2.0),
+    //             ]),
+    //         ),
+    //     ]),
+    //     default_display_config: HashMap::from([
+    //         ("name".to_string(), true),
+    //         ("bio".to_string(), true),
+    //         ("image_url".to_string(), true),
+    //         ("social_links".to_string(), true),
+    //     ]),
+    // };
+
+    // let template_id = template_store.create_template(&author_bio_template).await?;
+
+
+    // retrieved_doc.add_block(
+    //         "paragraph",
+    //         BlockData::from([("text".to_string(), BlockValue::String("updatesjdfals;djfa".to_string()))]),
+    // );
+
+    let state = AppState {
+        db: db,
     };
+    
+     // store.update_document(&doc_id, retrieved_doc).await?;
 
-    let template_id = template_store.create_template(&author_bio_template).await?;
-
- 
-    retrieved_doc.add_block(
-            "paragraph",
-            BlockData::from([("text".to_string(), BlockValue::String("updatesjdfals;djfa".to_string()))]),
-    );
-
-
-     store.update_document(&doc_id, retrieved_doc).await?;
-
-    Ok(())
+     
+     HttpServer::new(move || {
+         App::new()
+         .state(state.clone())
+         .wrap(Cors::new().allowed_origin("*").finish())
+        .wrap(Logger::default())
+        .wrap(Logger::new("%a %{User-Agent}i"))
+             .configure(services::blocks::router::config)
+     })
+     .bind("127.0.0.1:3030")?
+     .run()
+     .await
 }

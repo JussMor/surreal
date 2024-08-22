@@ -5,14 +5,19 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4.38"
+dotenv = "0.15.0"
+env_logger = "0.11.5"
+futures = "0.3.30"
 futures-util = "0.3.30"
+log = "0.4.22"
+ntex = { version = "2.3.0", features = ["tokio"] }
+ntex-cors = "2.0.0"
 pretty_env_logger = "0.5.0"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 surrealdb = "1.5.3"
 tokio = { version = "1.38.0", features = ["full"] }
 uuid = "1.10.0"
-warp = "0.3.7"
 # Add your dependencies here
 
 [workspace]
@@ -20,4 +25,4 @@ warp = "0.3.7"
 
 [[bin]]
 name="upbase"
-path="src/main.rs"
+path="main.rs"
