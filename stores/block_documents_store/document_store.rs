@@ -13,8 +13,8 @@ impl BlockDocumentStore {
         Ok(Self { db })
     }
 
-    pub async fn create_document(&self, doc: BlockDocument) -> Result<BlockDocument, surrealdb::Error> {
-        let doc: Vec<BlockDocument> = self.db.create("documents").content(&doc).await?;
+    pub async fn create_document(&self, doc_name: &str, doc: BlockDocument) -> Result<BlockDocument, surrealdb::Error> {
+        let doc: Vec<BlockDocument> = self.db.create(doc_name).content(&doc).await?;
         Ok(doc.first().cloned().ok_or(surrealdb::Error::Db(
             surrealdb::error::Db::RecordExists {
                 thing: "The document create document already exits".to_string(),

@@ -22,39 +22,42 @@ pub type BlockData = HashMap<String, BlockValue>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
-    id: String,
+    pub id: String,
     #[serde(rename = "type")]
-    block_type: String,
-    data: HashMap<String, BlockValue>,
+    pub block_type: String,
+    pub data: HashMap<String, BlockValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Change {
-    block_id: String,
-    timestamp: DateTime<Utc>,
-    old_data: HashMap<String, BlockValue>,
-    new_data: HashMap<String, BlockValue>,
+    pub block_id: String,
+    pub timestamp: DateTime<Utc>,
+    pub old_data: HashMap<String, BlockValue>,
+    pub new_data: HashMap<String, BlockValue>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockDocumentContent {
-    time: i64,
-    blocks: Vec<Block>,
-    version: String,
+    pub time: i64,
+    pub blocks: Vec<Block>,
+    pub version: String,
 }
 
+// Add an attribute independent from the id field
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Thing>,
-    content: BlockDocumentContent,
-    changes: Vec<Change>,
+    pub id: Option<Thing>,
+    pub name: String,
+    pub content: BlockDocumentContent,
+    pub changes: Vec<Change>,
 }
 
 impl BlockDocument {
-    pub fn new() -> Self {
+    pub fn new(name: &str) -> Self {
         BlockDocument {
             id: None,
+            name: String::from(name),
             content: BlockDocumentContent {
                 time: Utc::now().timestamp_millis(),
                 blocks: Vec::new(),

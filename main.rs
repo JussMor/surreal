@@ -19,162 +19,164 @@ mod db;
 mod models;
 mod stores;
 
+
+
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     db: Arc<Surreal<Client>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ComponentTemplate {
-    id: Option<Thing>,
-    name: String,
-    default_data: HashMap<String, BlockValue>,
-    default_display_config: HashMap<String, bool>,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// struct ComponentTemplate {
+//     id: Option<Thing>,
+//     name: String,
+//     default_data: HashMap<String, BlockValue>,
+//     default_display_config: HashMap<String, bool>,
+// }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-enum BlockValue {
-    Null,
-    None,
-    Vec(Vec<BlockValue>),
-    Boolean(bool),
-    String(String),
-    Number(f64),
-    Thing(Thing),
-    Object(HashMap<String, BlockValue>),
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// #[serde(untagged)]
+// enum BlockValue {
+//     Null,
+//     None,
+//     Vec(Vec<BlockValue>),
+//     Boolean(bool),
+//     String(String),
+//     Number(f64),
+//     Thing(Thing),
+//     Object(HashMap<String, BlockValue>),
+// }
 
-type BlockData = HashMap<String, BlockValue>;
+// type BlockData = HashMap<String, BlockValue>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Block {
-    id: String,
-    #[serde(rename = "type")]
-    block_type: String,
-    data: HashMap<String, BlockValue>,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// struct Block {
+//     id: String,
+//     #[serde(rename = "type")]
+//     block_type: String,
+//     data: HashMap<String, BlockValue>,
+// }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Change {
-    block_id: String,
-    timestamp: DateTime<Utc>,
-    old_data: HashMap<String, BlockValue>,
-    new_data: HashMap<String, BlockValue>,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// struct Change {
+//     block_id: String,
+//     timestamp: DateTime<Utc>,
+//     old_data: HashMap<String, BlockValue>,
+//     new_data: HashMap<String, BlockValue>,
+// }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct DocumentContent {
-    time: i64,
-    blocks: Vec<Block>,
-    version: String,
-}
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Document {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Thing>,
-    content: DocumentContent,
-    changes: Vec<Change>,
-}
-struct DocumentStore {
-    db: Surreal<Client>,
-}
+// #[derive(Debug, Serialize, Deserialize, Clone)]
+// struct DocumentContent {
+//     time: i64,
+//     blocks: Vec<Block>,
+//     version: String,
+// }
+// #[derive(Debug, Serialize, Deserialize, Clone)]
+// struct Document {
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     id: Option<Thing>,
+//     content: DocumentContent,
+//     changes: Vec<Change>,
+// }
+// struct DocumentStore {
+//     db: Surreal<Client>,
+// }
 
-impl DocumentStore {
-    async fn new(db: Surreal<Client>) -> Result<Self, surrealdb::Error> {
-        Ok(Self { db })
-    }
+// impl DocumentStore {
+//     async fn new(db: Surreal<Client>) -> Result<Self, surrealdb::Error> {
+//         Ok(Self { db })
+//     }
 
-    async fn create_document(&self, doc: Document) -> Result<Document, surrealdb::Error> {
-        let doc: Vec<Document> = self.db.create("documents").content(&doc).await?;
-        Ok(doc.first().cloned().ok_or(surrealdb::Error::Db(
-            surrealdb::error::Db::RecordExists {
-                thing: "The document create document already exits".to_string(),
-            },
-        ))?)
-    }
+//     async fn create_document(&self, doc: Document) -> Result<Document, surrealdb::Error> {
+//         let doc: Vec<Document> = self.db.create("documents").content(&doc).await?;
+//         Ok(doc.first().cloned().ok_or(surrealdb::Error::Db(
+//             surrealdb::error::Db::RecordExists {
+//                 thing: "The document create document already exits".to_string(),
+//             },
+//         ))?)
+//     }
 
-    async fn get_document(&self, id: &Thing) -> Result<Option<Document>, surrealdb::Error> {
-        let result = self.db.select(("documents", id.id.to_raw())).await?;
-        Ok(result)
-    }
+//     async fn get_document(&self, id: &Thing) -> Result<Option<Document>, surrealdb::Error> {
+//         let result = self.db.select(("documents", id.id.to_raw())).await?;
+//         Ok(result)
+//     }
 
-    async fn update_document(&self, id: &Thing, doc: Document) -> Result<(), surrealdb::Error> {
-        self.db
-            .update::<Option<Document>>(("documents", id.id.to_raw()))
-            .content(&doc)
-            .await?;
-        Ok(())
-    }
-}
+//     async fn update_document(&self, id: &Thing, doc: Document) -> Result<(), surrealdb::Error> {
+//         self.db
+//             .update::<Option<Document>>(("documents", id.id.to_raw()))
+//             .content(&doc)
+//             .await?;
+//         Ok(())
+//     }
+// }
 
-impl Document {
-    fn new() -> Self {
-        Document {
-            id: None,
-            content: DocumentContent {
-                time: Utc::now().timestamp_millis(),
-                blocks: Vec::new(),
-                version: "2.22.2".to_string(),
-            },
-            changes: Vec::new(),
-        }
-    }
+// impl Document {
+//     fn new() -> Self {
+//         Document {
+//             id: None,
+//             content: DocumentContent {
+//                 time: Utc::now().timestamp_millis(),
+//                 blocks: Vec::new(),
+//                 version: "2.22.2".to_string(),
+//             },
+//             changes: Vec::new(),
+//         }
+//     }
 
-    fn add_block(&mut self, block_type: &str, data: HashMap<String, BlockValue>) -> String {
-        let id = Uuid::new_v4().to_string();
-        let block = Block {
-            id: id.clone(),
-            block_type: block_type.to_string(),
-            data,
-        };
-        self.content.blocks.push(block);
-        id
-    }
+//     fn add_block(&mut self, block_type: &str, data: HashMap<String, BlockValue>) -> String {
+//         let id = Uuid::new_v4().to_string();
+//         let block = Block {
+//             id: id.clone(),
+//             block_type: block_type.to_string(),
+//             data,
+//         };
+//         self.content.blocks.push(block);
+//         id
+//     }
 
-    // testear this to check if it working with new impl
-    fn update_block(
-        &mut self,
-        block_id: &str,
-        new_data: HashMap<String, BlockValue>,
-    ) -> Result<(), String> {
-        if let Some(block) = self.content.blocks.iter_mut().find(|b| b.id == block_id) {
-            let old_data = std::mem::replace(&mut block.data, new_data.clone());
-            let change = Change {
-                block_id: block_id.to_string(),
-                timestamp: Utc::now(),
-                old_data,
-                new_data,
-            };
-            self.changes.push(change);
-            Ok(())
-        } else {
-            Err("Block not found".to_string())
-        }
-    }
-}
+//     // testear this to check if it working with new impl
+//     fn update_block(
+//         &mut self,
+//         block_id: &str,
+//         new_data: HashMap<String, BlockValue>,
+//     ) -> Result<(), String> {
+//         if let Some(block) = self.content.blocks.iter_mut().find(|b| b.id == block_id) {
+//             let old_data = std::mem::replace(&mut block.data, new_data.clone());
+//             let change = Change {
+//                 block_id: block_id.to_string(),
+//                 timestamp: Utc::now(),
+//                 old_data,
+//                 new_data,
+//             };
+//             self.changes.push(change);
+//             Ok(())
+//         } else {
+//             Err("Block not found".to_string())
+//         }
+//     }
+// }
 
-struct ComponentTemplateStore {
-    db: Surreal<Client>,
-}
+// struct ComponentTemplateStore {
+//     db: Surreal<Client>,
+// }
 
-impl ComponentTemplateStore {
-    async fn new(db: Surreal<Client>) -> Result<Self, surrealdb::Error> {
-        Ok(Self { db })
-    }
+// impl ComponentTemplateStore {
+//     async fn new(db: Surreal<Client>) -> Result<Self, surrealdb::Error> {
+//         Ok(Self { db })
+//     }
 
-    async fn create_template(
-        &self,
-        template: &ComponentTemplate,
-    ) -> Result<ComponentTemplate, surrealdb::Error> {
-        let doc: Vec<ComponentTemplate> = self.db.create("components").content(&template).await?;
-        Ok(doc.first().cloned().ok_or(surrealdb::Error::Db(
-            surrealdb::error::Db::RecordExists {
-                thing: "The component created already exits".to_string(),
-            },
-        ))?)
-    }
-}
+//     async fn create_template(
+//         &self,
+//         template: &ComponentTemplate,
+//     ) -> Result<ComponentTemplate, surrealdb::Error> {
+//         let doc: Vec<ComponentTemplate> = self.db.create("components").content(&template).await?;
+//         Ok(doc.first().cloned().ok_or(surrealdb::Error::Db(
+//             surrealdb::error::Db::RecordExists {
+//                 thing: "The component created already exits".to_string(),
+//             },
+//         ))?)
+//     }
+// }
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
@@ -333,6 +335,7 @@ async fn main() -> std::io::Result<()> {
         .wrap(Logger::default())
         .wrap(Logger::new("%a %{User-Agent}i"))
              .configure(services::blocks::router::config)
+             .configure(services::tables::router::config)
      })
      .bind("127.0.0.1:3030")?
      .run()
