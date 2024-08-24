@@ -1,4 +1,4 @@
-use ntex::web::{get, HttpResponse,Error};
+use ntex::web::{post, HttpResponse,Error};
 use ntex::web::types::{Path, State};
 use log::{info, error};
 use serde_json::json;
@@ -15,7 +15,7 @@ struct PathParams {
 }
 
 
-#[get("/create/block_document/{db_name}/{doc_name}")]
+#[post("/create/block_document/{db_name}/{doc_name}")]
 async fn create_block(state: State<AppState>,path: Path<PathParams>) -> Result<HttpResponse, Error> {
     
     let id = path.db_name.to_string();

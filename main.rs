@@ -18,6 +18,7 @@ mod services;
 mod db;
 mod models;
 mod stores;
+mod errors;
 
 
 
