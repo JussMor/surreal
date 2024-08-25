@@ -1,10 +1,9 @@
 use log::{error, info};
-use ntex::web::types::{ State, Json};
+use ntex::web::types::{Json, State};
 use ntex::web::{post, HttpResponse};
 use serde::Deserialize;
 use serde_json::json;
-use surrealdb::sql::{ Id, Thing};
-
+use surrealdb::sql::{Id, Thing};
 
 use crate::errors::app_errors::AppError;
 use crate::models::blocks::{BlockData, BlockDocument, BlockValue};
@@ -12,11 +11,17 @@ use crate::stores::block_documents_store::document_store;
 use crate::stores::tables_store::tables_store;
 use crate::AppState;
 
-
 #[derive(Debug, Deserialize)]
 struct BodyParams {
     db_name: String,
     doc_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateBlocksWithCompnentParams {
+    table: String,
+    table_id: String,
+    component_id: String,
 }
 
 #[post("/post/block_document")]
@@ -58,8 +63,9 @@ async fn create_block(
                     id: Id::from(check_table[0].id.clone().unwrap().id),
                 }),
             )]));
+
             store
-                .update_document(
+                .merge_document(
                     &db_name,
                     &document.id.clone().unwrap().id.to_string(),
                     update_block,
@@ -73,5 +79,55 @@ async fn create_block(
 
     Ok(HttpResponse::Ok().body(json!({
         "document": document,
+    })))
+}
+
+#[post("/post/update_block_document_with_component")]
+async fn update_block_with_component(
+    state: State<AppState>,
+    data: Json<UpdateBlocksWithCompnentParams>,
+) -> Result<HttpResponse, AppError> {
+    let db = (*state.db).clone();
+
+    let data = UpdateBlocksWithCompnentParams {
+        table: data.table.to_string(),
+        table_id: data.table_id.to_string(),
+        component_id: data.component_id.to_string(),
+    };
+
+    let store = match document_store::BlockDocumentStore::new(db).await {
+        Ok(store) => store,
+        Err(e) => return Err(AppError::InternalError(e.to_string())),
+    };
+
+    let mut get_document = match store.get_document(&data.table, &data.table_id).await {
+        Ok(doc) => match doc {
+            Some(doc) => doc,
+            None => return Err(AppError::InternalError("Document not found".to_string())),
+        },
+        Err(e) => return Err(AppError::InternalError(e.to_string())),
+    };
+
+    get_document.add_block(
+        "custom_template",
+        BlockData::from([(
+            "component_template_id".to_string(),
+            BlockValue::Thing(Thing {
+                tb: "components".to_string(),
+                id: Id::from(&data.component_id),
+            }),
+        )]),
+    );
+
+    match store
+        .update_document(&data.table, &data.table_id, get_document)
+        .await
+    {
+        Ok(doc) => doc,
+        Err(e) => return Err(AppError::InternalError(e.to_string())),
+    };
+
+    Ok(HttpResponse::Ok().body(json!({
+        "document": "Document Updated 2 Successfully",
     })))
 }

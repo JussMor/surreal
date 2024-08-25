@@ -6,5 +6,6 @@ use super::blocks;
 pub fn config(cfg:&mut ServiceConfig) {
     cfg.service(
         scope("/api/v1/blocks")
-                .service(blocks::create_block));
+                .service(blocks::create_block)
+                .service(blocks::update_block_with_component));
 }

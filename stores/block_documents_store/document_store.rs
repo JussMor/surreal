@@ -1,5 +1,4 @@
 use surrealdb::engine::remote::ws::Client;
-use surrealdb::sql::Thing;
 use surrealdb::Surreal;
 
 use crate::errors::app_errors::AppError;
@@ -33,16 +32,28 @@ impl BlockDocumentStore {
         document
     }
 
-    #[allow(dead_code)]
-    pub async fn get_document(&self, id: &Thing) -> Result<Option<BlockDocument>, AppError> {
-        let result = self.db.select(("documents", id.id.to_raw())).await?;
-        Ok(result)
+
+    pub async fn get_document(&self, table: &str, table_id: &str) -> Result<Option<BlockDocument>, AppError> {
+        let result = self.db.select((table, table_id)).await?;
+
+        match result {
+            Some(doc) => Ok(Some(doc)),
+            None => Ok(None),
+        }
     }
 
-    pub async fn update_document(&self, table: &str, table_id: &str, partical_doc: BlockValue) -> Result<(), AppError> {
+    pub async fn merge_document(&self, table: &str, table_id: &str, partical_doc: BlockValue) -> Result<(), AppError> {
         self.db
             .update::<Option<BlockDocument>>((table, table_id))
             .merge(&partical_doc)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_document(&self, table: &str, table_id: &str, doc: BlockDocument) -> Result<(), AppError> {
+        self.db
+            .update::<Option<BlockDocument>>((table, table_id))
+            .content(&doc)
             .await?;
         Ok(())
     }
