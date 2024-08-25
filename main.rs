@@ -48,6 +48,7 @@ async fn main() -> std::io::Result<()> {
         .wrap(Logger::new("%a %{User-Agent}i"))
              .configure(services::blocks::router::config)
              .configure(services::tables::router::config)
+             .configure(services::templates::router::config)
      })
      .bind("127.0.0.1:3030")?
      .run()

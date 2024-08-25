@@ -5,16 +5,16 @@ use crate::models::templates::BlockComponentTemplate;
 use crate::errors::app_errors::AppError;
 
 
-struct BlockComponentTemplateStore {
+pub struct BlockComponentTemplateStore {
     db: Surreal<Client>,
 }
 
 impl BlockComponentTemplateStore {
-    async fn new(db: Surreal<Client>) -> Result<Self, AppError> {
+    pub async fn new(db: Surreal<Client>) -> Result<Self, AppError> {
         Ok(Self { db })
     }
 
-    async fn create_template(
+    pub async fn create_template(
         &self,
         template: &BlockComponentTemplate,
     ) -> Result<BlockComponentTemplate, AppError> {
@@ -25,4 +25,23 @@ impl BlockComponentTemplateStore {
             },
         ))?)
     }
+
+    pub async fn get_all_templates(&self) -> Result<Vec<BlockComponentTemplate>, AppError> {
+        let templates: Result<Vec<BlockComponentTemplate>, surrealdb::Error>  = self.db.query("SELECT * FROM components").await?.take(0);
+        
+        match templates {
+            Ok(templates) => {
+                Ok(templates)
+            },
+            Err(e) => {
+                log::error!("Failed to get all templates: {:?}", e);
+                Err(AppError::DatabaseError(surrealdb::Error::Db(
+                    surrealdb::error::Db::RecordExists  {
+                        thing: "A Record with this name already exist".to_string(),
+                    },
+                )))
+            }
+        }
+    }
+
 }
