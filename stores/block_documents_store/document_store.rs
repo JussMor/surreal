@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::sql::Thing;
 use surrealdb::Surreal;
@@ -35,6 +33,7 @@ impl BlockDocumentStore {
         document
     }
 
+    #[allow(dead_code)]
     pub async fn get_document(&self, id: &Thing) -> Result<Option<BlockDocument>, AppError> {
         let result = self.db.select(("documents", id.id.to_raw())).await?;
         Ok(result)

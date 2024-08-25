@@ -6,5 +6,4 @@ use surrealdb::sql::Thing;
 pub struct TablesFieldStore {
     pub id: Option<Thing>,
     pub name: String,
-    pub table_type: String,
 }

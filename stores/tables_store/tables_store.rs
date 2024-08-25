@@ -48,12 +48,10 @@ impl TablesStore {
 
     pub async fn create_table_storage(
         &self,
-        table_type: &str,
         name: &str,
     ) -> Result<Vec<TablesFieldStore>, AppError> {
         let new_table = TablesFieldStore {
             id: None,
-            table_type: table_type.to_string(),
             name: name.to_string(),
         };
         match self.db.create("tables_storage").content(new_table).await {

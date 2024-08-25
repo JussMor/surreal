@@ -8,4 +8,4 @@ OPTION IMPORT;
 -- TABLE: documents
 -- ------------------------------
 
-DEFINE TABLE documents TYPE ANY SCHEMALESS PERMISSIONS NONE;
+DEFINE INDEX name ON TABLE tables_storage COLUMNS name UNIQUE;
