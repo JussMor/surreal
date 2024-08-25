@@ -1,6 +1,6 @@
 use serde_json::json;
 use derive_more::{Display, From};
-use ntex::http::{self, StatusCode};
+use ntex::http::StatusCode;
 use ntex::web::{self, HttpResponse};
 use surrealdb::Error as SurrealError;
 

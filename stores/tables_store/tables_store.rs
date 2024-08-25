@@ -1,13 +1,8 @@
-use ntex::web::WebResponseError;
-use serde::Serialize;
 use surrealdb::engine::remote::ws::Client;
-use surrealdb::Response;
 use surrealdb::Surreal;
 
 use crate::errors::app_errors::AppError;
-use crate::models::blocks::BlockDocument;
 use crate::models::tables::TablesFieldStore;
-use ntex::web::{self, post, Error, HttpResponse};
 
 pub struct TablesStore {
     db: Surreal<Client>,
@@ -30,12 +25,34 @@ impl TablesStore {
     //     }
     // }
 
+    pub async fn get_table_by_name(&self, table_name: &str) -> Result<Vec<TablesFieldStore>, AppError> {
+
+        let table:Result<Vec<TablesFieldStore>, surrealdb::Error> = self.db.query("SELECT id, name, table_type FROM tables_storage WHERE name = $name")
+            .bind(("name", table_name))
+        .await.unwrap().take(0);
+        
+        match table {
+            Ok(table) => {
+                Ok(table)
+            },
+            Err(e) => {
+                log::error!("Failed to get table by name: {:?}", e);
+                Err(AppError::DatabaseError(surrealdb::Error::Db(
+                    surrealdb::error::Db::RecordExists  {
+                        thing: "A Record with this name already exist".to_string(),
+                    },
+                )))
+            }
+        }
+    }
+
     pub async fn create_table_storage(
         &self,
         table_type: &str,
         name: &str,
     ) -> Result<Vec<TablesFieldStore>, AppError> {
         let new_table = TablesFieldStore {
+            id: None,
             table_type: table_type.to_string(),
             name: name.to_string(),
         };
@@ -45,10 +62,34 @@ impl TablesStore {
                 log::error!("Failed to create table storage: {:?}", e);
                 Err(AppError::DatabaseError(surrealdb::Error::Db(
                     surrealdb::error::Db::RecordExists {
-                        thing: "The table created already exits".to_string(),
+                        thing: e.to_string(),
                     },
                 )))
             }
         }
     }
+
+
+    pub async fn delete_table_storage(
+        &self,
+        table_name: &str,
+        table_id: &str,
+    ) -> Result<(), AppError> {
+        let delete: Result<Option<TablesFieldStore>, surrealdb::Error> = self.db.delete((table_name, table_id)).await;
+        
+        match delete {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                log::error!("Failed to delete table storage: {:?}", e);
+                Err(AppError::DatabaseError(surrealdb::Error::Db(
+                    surrealdb::error::Db::RecordExists {
+                        thing: e.to_string(),
+                    },
+                )))
+            }
+        }
+    }
+
+
+
 }
