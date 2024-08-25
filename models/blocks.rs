@@ -67,6 +67,7 @@ impl BlockDocument {
         }
     }
 
+    #[allow(dead_code)]
     pub fn add_block(&mut self, block_type: &str, data: HashMap<String, BlockValue>) -> String {
         let id = Uuid::new_v4().to_string();
         let block = Block {
@@ -79,6 +80,7 @@ impl BlockDocument {
     }
 
     // testear this to check if it working with new impl
+    #[allow(dead_code)]
     pub fn update_block(
         &mut self,
         block_id: &str,

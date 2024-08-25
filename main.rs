@@ -1,17 +1,8 @@
-use std::any::Any;
-use std::collections::HashMap;
-
-use chrono::{DateTime, Utc};
 use ntex_cors::Cors;
-use serde::{Deserialize, Serialize};
-use surrealdb::engine::remote::ws::{Client, Ws};
-use surrealdb::opt::auth::Root;
-use surrealdb::sql::{thing, Id, Uuid};
-use surrealdb::sql::{Thing, Value};
+use surrealdb::engine::remote::ws::Client;
 use surrealdb::Surreal;
 use ntex::web::{App, HttpServer, middleware::Logger};
 use env_logger::Env;
-use std::env;
 use std::sync::Arc;
 
 mod services;
@@ -25,8 +16,6 @@ mod errors;
 pub struct AppState {
     db: Arc<Surreal<Client>>,
 }
-
-
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
@@ -46,12 +35,8 @@ async fn main() -> std::io::Result<()> {
     
     let db = Arc::new(connection);
     
-    
-
-
-
     let state = AppState {
-        db: db,
+        db,
     };
     
      
